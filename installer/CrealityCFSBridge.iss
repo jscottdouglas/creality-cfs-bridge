@@ -96,7 +96,8 @@ Name: "{group}\Uninstall Creality CFS Bridge"; Filename: "{uninstallexe}"
 ; preset does not need the service to be up, so it does not matter whether
 ; this runs before or after the registration.
 Filename: "{app}\cfsbridge.exe"; Parameters: "preset"; StatusMsg: "Writing the slicer preset"; Flags: runhidden waituntilterminated runasoriginaluser
-Filename: "http://127.0.0.1:7126/setup"; Description: "Open the setup page to enter the printer address"; Flags: postinstall shellexec nowait
+; skipifsilent: a silent install (CI smoke test, scripted deployments) must not open a browser.
+Filename: "http://127.0.0.1:7126/setup"; Description: "Open the setup page to enter the printer address"; Flags: postinstall shellexec nowait skipifsilent
 
 [UninstallRun]
 Filename: "{app}\CrealityCFSBridge.exe"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "stop"

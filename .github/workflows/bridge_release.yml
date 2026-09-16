@@ -273,8 +273,11 @@ jobs:
 
           # /TASKS= with an empty list unticks every task, which here means the
           # chained slicer install: the runner is not going to install a slicer.
-          $run = Start-Process -Wait -PassThru -FilePath $setup.FullName `
+          # Wait on the setup process alone: -Wait would also wait for anything the
+          # installer spawns, which is how the first runs hung until the job limit.
+          $run = Start-Process -PassThru -FilePath $setup.FullName `
                    -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS='
+                   $null = $run.Handle; $run.WaitForExit()
           if ($run.ExitCode -ne 0) {
             Show-BridgeLogs
             throw "the setup exe exited with $($run.ExitCode)"
@@ -332,8 +335,9 @@ jobs:
             throw "there is no uninstaller at $uninstaller"
           }
           Write-Host "uninstalling with $uninstaller"
-          $run = Start-Process -Wait -PassThru -FilePath $uninstaller `
+          $run = Start-Process -PassThru -FilePath $uninstaller `
                    -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+                   $null = $run.Handle; $run.WaitForExit()
           if ($run.ExitCode -ne 0) {
             Show-BridgeLogs
             throw "the uninstaller exited with $($run.ExitCode)"
