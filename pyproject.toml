@@ -1,0 +1,23 @@
+[project]
+name = "cfsbridge"
+version = "0.3.0"
+description = "Local bridge for Creality K2 family printers: CFS slot mapping, Fluidd with a CFS card, and the K2 camera, for the unofficial OrcaSlicer build"
+requires-python = ">=3.12"
+dependencies = ["requests>=2.32", "websockets>=13"]
+license = "GPL-3.0-only"
+authors = [{name = "jscottdouglas"}]
+readme = "README.md"
+
+[project.urls]
+Homepage = "https://github.com/jscottdouglas/creality-cfs-bridge"
+Issues = "https://github.com/jscottdouglas/creality-cfs-bridge/issues"
+
+[project.scripts]
+cfsbridge = "cfsbridge.cli:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cfsbridge*"]

@@ -1,0 +1,388 @@
+# .github/workflows/bridge_release.yml
+#
+# Builds a release of the Creality CFS Bridge end to end, on a Windows runner,
+# from nothing but this repository and the pins in installer/:
+#
+#   1. privacy scan          tools/privacy_scan.py over the tree and the history
+#   2. build the Fluidd fork installer/fluidd_release.json says which commit
+#   3. package               installer/build_package.ps1 (PyInstaller + WinSW)
+#   4. compile the installer installer/build_installer.ps1 (Inno Setup)
+#   5. smoke test            install it, ask the service a question, uninstall it
+#   6. publish               attach the setup exe to the tag release
+#
+# The placeholder checksum rule
+# -----------------------------
+# installer/orca_release.json carries the URL and the SHA-256 of the slicer
+# installer that this setup exe can chain. Inno verifies that checksum before
+# it runs the download, so a setup exe compiled against a placeholder value can
+# never install the slicer, and must never be published.
+# installer/build_installer.ps1 refuses a placeholder unless it is passed
+# -AllowPlaceholderSha, and this workflow passes that switch in exactly one
+# case: a manual run (workflow_dispatch) where the operator ticked
+# allow_placeholder_sha. A tag build, and a push to main, never pass it.
+#
+# The honest consequence, while installer/orca_release.json still holds
+# "TBD-..." instead of a real checksum: step 4 fails on every push to main and
+# on every tag. That is deliberate. The fix is to build the slicer release and
+# fill in its real checksum, not to pass the switch.
+#
+# Until then, a manual run with allow_placeholder_sha ticked proves the rest of
+# the pipeline works. Such a run **builds an artifact and can never publish**,
+# and that is enforced rather than left to a habit: the release step requires
+# ALLOW_PLACEHOLDER_SHA to be anything other than 'true', and it requires the
+# event to be a push, so a manual run cannot reach it even when it is started
+# against a v* tag ref. The reason is the one above: a setup exe compiled
+# against a placeholder checksum cannot install the slicer at all, so
+# publishing it would put a release on the page that is broken by construction.
+# Its only legitimate use is the CI log it leaves behind, and the artifact a
+# maintainer can download and install by hand.
+name: bridge release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      allow_placeholder_sha:
+        description: >-
+          Compile the installer even though installer/orca_release.json still
+          holds a placeholder slicer checksum. Manual runs only. The setup exe
+          this produces cannot download the slicer and must not be published.
+        type: boolean
+        default: false
+
+# The release step creates a release and uploads an asset, which the default
+# read-only token cannot do.
+permissions:
+  contents: write
+
+# Declared once, here, so that the build step and the release step's condition
+# read the same value. It is the string 'false' for every push and every tag,
+# because the left operand short circuits, and 'true' only on a manual run
+# whose operator ticked the box.
+env:
+  ALLOW_PLACEHOLDER_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_placeholder_sha }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # A cold pnpm install plus a vite build plus PyInstaller plus an Inno
+    # compile plus an install-and-uninstall cycle is comfortably under an hour;
+    # this is the ceiling that stops a hung modal box or a stuck download from
+    # burning the default six hours.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The privacy scan's --git pass reads every commit, so it needs the
+          # whole history rather than the default single commit.
+          fetch-depth: 0
+
+      # Before the privacy scan, so that the scan runs on a known interpreter
+      # rather than on whichever Python the runner image happens to ship.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # No --identifiers: that file names one machine and is deliberately never
+      # published, so CI runs the generic patterns only. The machine-specific
+      # pass happens in the private tree, at export time, before anything
+      # reaches this repository.
+      - name: privacy scan
+        run: python tools/privacy_scan.py --root . --git
+
+      - name: read the fluidd pin
+        id: pins
+        shell: pwsh
+        run: |
+          $f = Get-Content installer/fluidd_release.json -Raw | ConvertFrom-Json
+          if (-not $f.repo) { throw 'installer/fluidd_release.json has no repo' }
+          if (-not $f.commit) { throw 'installer/fluidd_release.json has no commit' }
+          Write-Host "fluidd pin: $($f.repo) at $($f.commit)"
+          # This step is pwsh, where >> writes UTF-8 without a byte order mark,
+          # which is what the workflow command file parser expects.
+          "fluidd_repo=$($f.repo)" >> $env:GITHUB_OUTPUT
+          "fluidd_commit=$($f.commit)" >> $env:GITHUB_OUTPUT
+
+      - name: check out the fluidd fork
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.fluidd_repo }}
+          ref: ${{ steps.pins.outputs.fluidd_commit }}
+          path: fluidd-src
+
+      # The fork's own .node-version is the pin, so this cannot drift from what
+      # the fork's engines field allows.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: fluidd-src/.node-version
+
+      # docs/FLUIDD_FORK.md: at this pin the fork is pnpm, not npm. The pnpm
+      # version comes from the fork's own packageManager field, for the same
+      # reason as the node version above. If a future pin drops that field this
+      # step fails loudly, and the fix is to pin a version here instead.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: fluidd-src/package.json
+
+      - name: build fluidd
+        shell: pwsh
+        run: |
+          Set-Location fluidd-src
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm install --frozen-lockfile failed' }
+          pnpm run build
+          if ($LASTEXITCODE -ne 0) { throw 'pnpm run build failed' }
+          Set-Location ..
+          New-Item -ItemType Directory -Force -Path cfsbridge/fluidd | Out-Null
+          Copy-Item -Recurse -Force fluidd-src/dist/* cfsbridge/fluidd/
+          if (-not (Test-Path -LiteralPath 'cfsbridge/fluidd/index.html')) {
+            throw 'the fluidd build produced no index.html'
+          }
+
+      # A commit that is an ancestor of the fork's branch, rather than its tip,
+      # builds a plain upstream Fluidd: it compiles, it packages, it installs,
+      # and it has no CFS card and no Creality camera service. That is a wrong
+      # pin, not a build failure, so nothing downstream would notice.
+      #
+      # Two independent literals are checked, one from each half of the fork,
+      # because a single marker is one refactor away from being a false alarm:
+      #
+      #   creality-webrtc     the camera service type, from
+      #                       src/store/webcams/types.ts and the settings
+      #                       dropdown, which reaches the Settings chunk
+      #   dashboard.cfs-card  the layout-path on the collapsable-card in
+      #                       src/components/widgets/cfs/CfsCard.vue, which
+      #                       reaches the Dashboard chunk
+      #
+      # Neither is an i18n key, so neither can be resolved away at build time,
+      # and both were confirmed present in a built dist of this fork. Both
+      # missing is a wrong pin and fails. One missing is a rename or a refactor
+      # in the fork rather than the wrong tree, so it warns and carries on: the
+      # guard exists to catch the pin, not to police the fork's own naming.
+      - name: verify the bundle is the fork, not upstream fluidd
+        shell: pwsh
+        run: |
+          $markers = @('creality-webrtc', 'dashboard.cfs-card')
+          $js = Get-ChildItem -Path cfsbridge/fluidd -Recurse -Include *.js
+          if (-not $js) { throw 'the built bundle has no .js files at all' }
+          $found = @()
+          $absent = @()
+          foreach ($marker in $markers) {
+            $hit = $js | Select-String -Pattern $marker -SimpleMatch -List | Select-Object -First 1
+            if ($hit) {
+              $found += $marker
+              Write-Host "fork marker '$marker' found in $($hit.Path)"
+            } else {
+              $absent += $marker
+            }
+          }
+          if ($found.Count -eq 0) {
+            throw ('the built bundle carries neither of the fork markers (' +
+                   ($markers -join ', ') + '), so it is upstream fluidd and ' +
+                   'not the CFS fork. Check the commit in ' +
+                   'installer/fluidd_release.json: it must be the tip of the ' +
+                   'fork branch, not the upstream release commit the fork is ' +
+                   'based on, which is recorded separately as ' +
+                   'upstream_base_commit.')
+          }
+          if ($absent.Count -gt 0) {
+            Write-Warning ('the built bundle is the fork, but these markers ' +
+                           'have gone: ' + ($absent -join ', ') + '. Most ' +
+                           'likely a rename in the fork, in which case update ' +
+                           'this step. Continuing.')
+          }
+
+      - name: package
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/build_package.ps1
+
+      # choco installs Inno Setup into "C:\Program Files (x86)\Inno Setup 6",
+      # which is the second place installer/build_installer.ps1's Find-Iscc
+      # looks. INNO_DIR, the first place, is for a portable unpack on a machine
+      # with no installed Inno Setup, so it is deliberately not set here.
+      # -y because choco prompts for confirmation otherwise, and a prompt on a
+      # runner with no console to answer it is a step that waits for its
+      # timeout. The runner image sets allowGlobalConfirmation on some
+      # generations and not on others, so it is passed explicitly rather than
+      # relied on.
+      - name: install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # ALLOW_PLACEHOLDER_SHA comes from the workflow-level env at the top of
+      # this file, which is also what the release step's condition reads.
+      - name: build the installer
+        shell: pwsh
+        run: |
+          $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+                      '-File', 'installer/build_installer.ps1')
+          if ($env:ALLOW_PLACEHOLDER_SHA -eq 'true') {
+            Write-Warning ('compiling with -AllowPlaceholderSha. This setup exe ' +
+                           'cannot download the slicer and must not be published.')
+            $psArgs += '-AllowPlaceholderSha'
+          }
+          powershell @psArgs
+          if ($LASTEXITCODE -ne 0) {
+            throw "installer/build_installer.ps1 failed with exit code $LASTEXITCODE"
+          }
+
+      # Installs the setup exe the way a user would, asks the installed service
+      # a question that only a working service can answer, then uninstalls it
+      # and checks the service really went away. The setup exe's /HELP is never
+      # used: Inno shows it in a modal message box, which on a runner with no
+      # desktop would simply hang until the job timed out.
+      - name: smoke test the installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $appDir = Join-Path $env:ProgramFiles 'CrealityCFSBridge'
+          $logDir = Join-Path $env:ProgramData 'CrealityCFSBridge\logs'
+
+          # Everything the service writes lands in one folder: the bridge's own
+          # serve.log, named in installer/winsw.xml, and the WinSW wrapper,
+          # output and error logs, because that file sets logpath to the same
+          # directory. The package folder is dumped too, for the case where
+          # WinSW could not create the ProgramData folder at all and fell back
+          # to writing beside its own exe.
+          function Show-BridgeLogs {
+            foreach ($dir in @($logDir, $appDir)) {
+              Write-Host "----- logs in $dir -----"
+              if (-not (Test-Path -LiteralPath $dir)) {
+                Write-Host 'the directory does not exist'
+                continue
+              }
+              $logs = Get-ChildItem -LiteralPath $dir -Filter *.log -ErrorAction SilentlyContinue
+              if (-not $logs) { Write-Host 'no .log files' ; continue }
+              foreach ($log in $logs) {
+                Write-Host "----- $($log.FullName) ($($log.Length) bytes) -----"
+                Get-Content -LiteralPath $log.FullName -Tail 200 -ErrorAction SilentlyContinue |
+                  ForEach-Object { Write-Host $_ }
+              }
+            }
+          }
+
+          # -ErrorAction SilentlyContinue so that a missing dist folder or an
+          # unmatched wildcard reaches the message below. Without it,
+          # $ErrorActionPreference = 'Stop' turns Get-ChildItem's own
+          # not-found error into the failure, and the log says PathNotFound
+          # instead of saying what is actually wrong.
+          $setup = Get-ChildItem -Path 'dist/CrealityCFSBridge_Setup_*.exe' `
+                     -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw 'there is no setup exe in dist' }
+          Write-Host "installing $($setup.Name)"
+
+          # /TASKS= with an empty list unticks every task, which here means the
+          # chained slicer install: the runner is not going to install a slicer.
+          $run = Start-Process -Wait -PassThru -FilePath $setup.FullName `
+                   -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS='
+          if ($run.ExitCode -ne 0) {
+            Show-BridgeLogs
+            throw "the setup exe exited with $($run.ExitCode)"
+          }
+
+          # The installer registers and starts the service itself, and WinSW
+          # plus a PyInstaller one folder start is not instant on a cold runner
+          # disk, so this waits for the state rather than guessing at a sleep.
+          $status = ''
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            $svc = Get-Service -Name 'CrealityCFSBridge' -ErrorAction SilentlyContinue
+            if ($svc) {
+              $status = $svc.Status.ToString()
+              if ($status -eq 'Running') { break }
+            }
+            Start-Sleep -Seconds 2
+          }
+          if (-not $status) { $status = 'not registered at all' }
+          if ($status -ne 'Running') {
+            Show-BridgeLogs
+            throw "the service is '$status' 60 s after the install, not Running"
+          }
+          Write-Host 'the service is Running'
+
+          # Running is WinSW's view of its own child. Answering on the port is
+          # the bridge's, and it is the one that matters.
+          $body = ''
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $body = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 `
+                         -Uri 'http://127.0.0.1:7126/api/setup').Content
+              break
+            } catch {
+              Start-Sleep -Seconds 2
+            }
+          }
+          if (-not $body) {
+            Show-BridgeLogs
+            throw 'nothing answered on http://127.0.0.1:7126/api/setup within 60 s'
+          }
+          Write-Host "GET /api/setup -> $body"
+
+          # configured false is the whole point of the published package: it
+          # ships with no printer address, and the setup page is what writes
+          # one. A true here would mean an address had been baked in.
+          if ($body -notmatch '"configured": ?false') {
+            Show-BridgeLogs
+            throw "unexpected setup state: $body"
+          }
+
+          $uninstaller = Join-Path $appDir 'unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstaller)) {
+            throw "there is no uninstaller at $uninstaller"
+          }
+          Write-Host "uninstalling with $uninstaller"
+          $run = Start-Process -Wait -PassThru -FilePath $uninstaller `
+                   -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          if ($run.ExitCode -ne 0) {
+            Show-BridgeLogs
+            throw "the uninstaller exited with $($run.ExitCode)"
+          }
+
+          # Inno's uninstaller hands the work to a copy of itself in a temp
+          # folder and the first process can return before that copy is done,
+          # so the deregistration is waited for rather than assumed.
+          $deadline = (Get-Date).AddSeconds(60)
+          while ((Get-Date) -lt $deadline) {
+            if (-not (Get-Service -Name 'CrealityCFSBridge' -ErrorAction SilentlyContinue)) { break }
+            Start-Sleep -Seconds 2
+          }
+          if (Get-Service -Name 'CrealityCFSBridge' -ErrorAction SilentlyContinue) {
+            Show-BridgeLogs
+            throw 'the service is still registered 60 s after the uninstall'
+          }
+          Write-Host 'installed, answered on 7126, uninstalled, service gone'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CrealityCFSBridge_Setup
+          path: dist/CrealityCFSBridge_Setup_*.exe
+          if-no-files-found: error
+
+      # Three conditions, and all three have to hold before anything is
+      # published:
+      #
+      #   push                   a workflow_dispatch can be started against any
+      #                          ref, including a v* tag, and a manual run must
+      #                          never publish. Only the tag push itself does.
+      #   refs/tags/v*           a push to main builds and smoke tests but
+      #                          releases nothing.
+      #   not the placeholder    belt and braces on the rule at the top of this
+      #                          file. The build step cannot have passed
+      #                          -AllowPlaceholderSha unless this is a manual
+      #                          run, which the first condition already
+      #                          excludes, so this is the second lock on the
+      #                          same door: a setup exe that cannot install the
+      #                          slicer never becomes a release.
+      - name: release
+        if: >-
+          github.event_name == 'push' &&
+          startsWith(github.ref, 'refs/tags/v') &&
+          env.ALLOW_PLACEHOLDER_SHA != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CrealityCFSBridge_Setup_*.exe
+          generate_release_notes: true
+          # A release with notes and no installer attached is worse than no
+          # release, so an empty match fails the job.
+          fail_on_unmatched_files: true

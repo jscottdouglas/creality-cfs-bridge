@@ -1,0 +1,9 @@
+__pycache__/
+dist/
+build/
+cfsbridge/fluidd/
+*.spec.bak
+tools/privacy_identifiers.txt
+*.egg-info/
+.venv/
+*.log

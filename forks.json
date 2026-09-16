@@ -1,0 +1,26 @@
+{
+  "forks": [
+    {
+      "name": "fluidd",
+      "title": "Fluidd",
+      "repo": "fluidd-core/fluidd",
+      "pinned_tag": "v1.37.5",
+      "tracks": "release",
+      "pinned_commit": "281dadab3f3bc079bde05df6af6c452411ff3749",
+      "branch": "cfs",
+      "upstream_remote": "origin",
+      "why": "Pinned to the v1.37.5 release (promoted 2026-09-13 after a live trial; the printer's own Fluidd is 1.30.0-f3e4ac3 and branch cfs-1.30.0 keeps that build). The fork adds the CFS card, the CFS and Camera pages, a creality-webrtc camera service and an HTTP fallback for the three access calls this Moonraker lacks on the websocket."
+    },
+    {
+      "name": "orcaslicer",
+      "title": "OrcaSlicer",
+      "repo": "SoftFever/OrcaSlicer",
+      "pinned_tag": "",
+      "tracks": "branch",
+      "pinned_commit": "3e1daccd7c567a0a3d2b5721841d30845f21307e",
+      "branch": "cfs",
+      "upstream_remote": "origin",
+      "why": "Branch cfs adds the Creality CFS (K2) print host type. The fork tracks upstream main, not releases: the pinned base is main at 3e1daccd7c (rebased 2026-09-15), which is the base the shipped build was compiled from."
+    }
+  ]
+}

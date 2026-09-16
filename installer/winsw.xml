@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  installer/winsw.xml, installed as CrealityCFSBridge.xml beside
+  CrealityCFSBridge.exe (the renamed WinSW binary) in the package folder.
+
+  %BASE% is WinSW's own folder, so the service finds cfsbridge.exe and the
+  Fluidd bundle without any absolute path being written into this file.
+
+  The host flag is deliberately absent: `serve` then reads the printer address
+  from %ProgramData%\CrealityCFSBridge\config.json, which the setup page
+  writes, so the published package carries nobody's printer address.
+  (An XML comment cannot contain a double hyphen, which is why the flag is
+  named in prose here rather than spelled out.)
+-->
+<service>
+  <id>CrealityCFSBridge</id>
+  <name>Creality CFS Bridge</name>
+  <description>Local bridge for Creality K2 printers: CFS card, camera and slot mapping for the unofficial OrcaSlicer build.</description>
+  <executable>%BASE%\cfsbridge.exe</executable>
+  <arguments>serve --bind 127.0.0.1 --port 7126 --live --fluidd-dist "%BASE%\fluidd" --log "%ProgramData%\CrealityCFSBridge\logs\serve.log"</arguments>
+  <startmode>Automatic</startmode>
+  <serviceaccount><username>NT AUTHORITY\LocalService</username></serviceaccount>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size"><sizeThreshold>1024</sizeThreshold><keepFiles>5</keepFiles></log>
+  <logpath>%ProgramData%\CrealityCFSBridge\logs</logpath>
+</service>
