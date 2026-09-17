@@ -1,14 +1,18 @@
-# Creality CFS Bridge, part of Unofficial Creality OrcaSlicer with CFS, Camera Support
+# CFS Bridge (unofficial) for Creality K2 printers
 
-This repository is the bridge half of the project: a small local service that talks to a Creality
-K2 family printer, serves Fluidd with a CFS card, and negotiates the printer's camera. The other
-half is the slicer fork, [jscottdouglas/OrcaSlicer](https://github.com/jscottdouglas/OrcaSlicer),
-an OrcaSlicer build that can slice for a K2 family printer, map each extruder to a real CFS slot
-when it sends the job, and show the printer's camera and CFS units in its Device tab. Together
-they are a small Windows service plus a build of OrcaSlicer that knows how to talk to it.
+> **Independent community project.** This software is not made, endorsed, supported or
+> reviewed by Creality, by the OrcaSlicer project or by the Fluidd project. Creality, K2 and
+> CFS are trademarks of their owners and are used here only to say which printers this works
+> with. Do not contact Creality for support with it: use this repository's Issues page. Use it
+> at your own risk, on your own printer; it can start prints and move filament.
 
-> **Unofficial. Not affiliated with, endorsed by or supported by Creality or the OrcaSlicer
-> project.** Nothing here is a Creality product. Use it at your own risk, on your own printer.
+This repository is the bridge half of a two-part project called *Unofficial Creality OrcaSlicer
+with CFS, Camera Support*: a small local service that talks to a Creality K2 family printer,
+serves Fluidd with a CFS card, and relays the printer's camera. The other half is the slicer
+fork, [jscottdouglas/OrcaSlicer](https://github.com/jscottdouglas/OrcaSlicer), a build of
+OrcaSlicer that can slice for a K2 family printer, map each extruder to a real CFS slot when it
+sends the job, and show the printer's camera and CFS units in its Device tab. Together they are a
+small Windows service plus a build of OrcaSlicer that knows how to talk to it.
 
 ## Requirements
 
@@ -33,10 +37,14 @@ Honest about what has and has not been run against a printer:
   send dialog and pressing Print is the path that gets the most use.
 - **The bridge's CFS card reads are live**: units, slots, material, colour, remaining length,
   temperature and humidity all come from the printer.
-- **Not yet exercised on a printer:** the bridge's own job start, and the CFS card's **Load**,
-  **Unload** and **Tag** actions. The frames are built and checked against the protocol, but
-  they have not been sent to real hardware. The UI marks them as such, and the bridge refuses
-  all of them while a print is running.
+- **The bridge's own job start, and the card's Load and Unload, have been used on a printer.**
+  The job start maps each filament to a slot by material and starts the job; it refuses to
+  start if the printer does not confirm the mapping. On one printer the display service stopped
+  confirming mappings after a reboot until it was power-cycled; the bridge reports that plainly
+  rather than starting a job with the wrong slot.
+- **Not yet exercised on a printer:** the card's **Tag** re-read. The frame is built and checked
+  against the protocol, but it has not been sent to real hardware. The UI marks it as such, and
+  the bridge refuses all writes while a print is running.
 
 ## What it does
 
