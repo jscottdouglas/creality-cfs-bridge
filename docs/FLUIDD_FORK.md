@@ -13,10 +13,10 @@ against upstream as the work allows: **33 files, 2838 lines added, 22 removed**.
 | | |
 | --- | --- |
 | Upstream | `https://github.com/fluidd-core/fluidd` |
-| Upstream base, **as served today** | **v1.37.5** |
-| Upstream base commit | **`281dadab3f3bc079bde05df6af6c452411ff3749`** |
+| Upstream base, **as served today** | **v1.37.7** |
+| Upstream base commit | **`b2edab5bc690f5265a5aa1e56ae3f67669053fd4`** |
 | Fork | `https://github.com/jscottdouglas/fluidd`, branch **`cfs`** |
-| Built output, served | `cfsbridge/fluidd/`, 262 files, 12.81 MB |
+| Built output, served | `cfsbridge/fluidd/`, 263 files, 12.99 MB (v1.37.7 build) |
 | Served at | `GET http://127.0.0.1:7126/fluidd/` |
 
 The built bundle is not committed here: the release workflow builds the fork and packs the result
@@ -29,7 +29,8 @@ The fork started on **v1.30.0**, the build the printer itself serves: the
 printer's own Moonraker log reports its Fluidd as `1.30.0-f3e4ac3`, and
 `git rev-parse v1.30.0` upstream is `f3e4ac3c...`, so "the printer's Fluidd cannot
 do this, the fork can" began as a fair comparison rather than a version
-difference. The pin moved to **v1.37.5** after a live trial against the printer;
+difference. The pin moved to **v1.37.5** after a live trial against the printer, and to
+**v1.37.7** on 2026-10-19 (a clean rebase, see section 6);
 the comparisons in sections 3, 4 and 8 were all made on the v1.30.0 build and
 still hold, because none of the fork's changes was affected by the rebase in a
 way that altered them. Section 6 is what that rebase cost.
@@ -37,8 +38,11 @@ way that altered them. Section 6 is what that rebase cost.
 **The toolchain changed with the pin.** v1.30.0 was **npm** (a
 `package-lock.json`, no `packageManager` field, `engines.node` `^18 || ^20`,
 `.node-version` 20.9.0), and built cleanly on node 22 anyway. v1.37.5 is
-**pnpm**: build it with `pnpm install --frozen-lockfile` and `pnpm run build`.
-Check `packageManager` in the fork's `package.json` before assuming either.
+**pnpm** 11 (`packageManager: pnpm@11.22.0`, `.node-version` 24.11.0). From v1.37.6 it is
+**pnpm 12**, and both pins live in `devEngines` in `package.json` (`packageManager` is now an
+object, `runtime` is node `^24.11.0`); `.node-version` is gone. Build it with
+`pnpm install --frozen-lockfile` and `pnpm run build`. Check `devEngines` (or `packageManager`)
+in the fork's `package.json` before assuming any of this.
 
 Build times:
 
@@ -104,7 +108,8 @@ component by `startCase(service).replace(/ /g, '') + 'Camera'`, so
 | `src/store/cfs/actions.ts` | **New.** Reference-counted polling of `GET /cfs/card` every 3 s, `GET /cfs/writes`, `GET /updates`, and one `write` action that posts to the bridge and keeps whatever it answered. |
 | `src/store/index.ts`, `src/store/types.ts` | Register the module. |
 | `src/components/widgets/cfs/CfsCard.vue` | **New.** The dashboard card. A `collapsable-card` with `layout-path="dashboard.cfs-card"` and `draggable`, which is all it takes to appear in layout mode, drag between columns, collapse and hide. |
-| `src/components/widgets/cfs/CfsUnits.vue` | **New.** Four units with model, serial, temperature and humidity; sixteen slots with colour swatch, type, vendor/name, remaining, loaded and mapped chips, and Load / Unload / Tag. Shared by the card and the page. |
+| `src/components/widgets/cfs/CfsUnits.vue` | **New.** Four units with model, serial, temperature and humidity; sixteen slots with colour swatch, type, vendor/name, remaining, loaded and mapped chips, and Load / Unload / Tag. While the job is paused it shows a warning and Load / Unload turn orange: they become the paused-job override. Shared by the card and the page. |
+| `src/util/cfs-feed.ts` | **New.** Load and Unload for the card and the page. While the bridge's `print_state` is `paused` it asks for confirmation and posts `/cfs/feed` with `"override": true`; it reads the state again when the dialog closes and sends nothing if the job is no longer paused. Any other state posts the plain call, which the bridge refuses while a job is printing. Unit tests in `src/util/__tests__/cfs-feed.spec.ts`. |
 | `src/components/widgets/cfs/CfsSlotDialog.vue` | **New.** The slot edit dialog: vendor, type and name cascading out of the printer's own filament list, a colour picker with a hex field, min and max temperature, Write to slot and Clear slot. |
 | `src/components/widgets/cfs/CfsOptions.vue` | **New.** The printer-wide auto refill, auto feed and self test toggles, plus the read-only auto update filament. |
 | `src/components/widgets/cfs/CfsWriteLog.vue` | **New.** Every write the bridge has made, with Undo where the bridge says it is undoable and the bridge's reason where it is not. |
@@ -164,11 +169,12 @@ reloads, which is what the stored active-camera setting needs.
 
 ## 5. How to rebuild
 
-In a clone of the fork, on the `cfs` branch. At the current v1.37.5 pin that is pnpm:
+In a clone of the fork, on the `cfs` branch. At the current v1.37.7 pin that is pnpm 12 (on
+Windows: `npm install -g pnpm@12.11.2`, the version in `devEngines`):
 
 ```bash
 pnpm install --frozen-lockfile   # only after a dependency change
-pnpm run build                   # about 86 s cold, output in dist/
+pnpm run build                   # about 86 s cold at v1.37.5, output in dist/
 ```
 
 At the older v1.30.0 tag the same two steps are `npm ci` and `npm run build`.
@@ -222,6 +228,13 @@ because upstream has no `src/store/cfs` and no `src/components/widgets/cfs`. In
 other words the fork is cheap to carry, and it was designed that way:
 everything substantial lives in a file upstream does not have.
 
+Measured when the pin moved from v1.37.5 to **v1.37.7** (2026-10-19): **no conflicts**, all five
+fork commits replayed as they were. What the clean rebase did not show was the toolchain: upstream
+moved to pnpm 12 with its pins under `devEngines` and deleted `.node-version`, which the fork's
+`cfs-build.yml` and the bridge's `bridge_release.yml` both read. Both now use `pnpm/setup`, which
+reads `devEngines`. The privacy scan base in `cfs-build.yml` is the upstream base commit and has to
+move with every rebase.
+
 **But do not read "registration point" as "two-line conflict".** When that rebase was actually
 performed, only six of the nine were that; three had changed shape underneath, and three files that
 did **not** conflict still had to be edited.
@@ -251,7 +264,7 @@ Two things to check by hand after a rebase, because neither has a test:
    the component name from the service string, `CrealityWebrtcCamera` needs
    registering explicitly.
 
-Both were checked against v1.37.5 and both still hold.
+Both were checked against v1.37.5 and again against v1.37.7, and both still hold.
 Add a third to the list, learned the hard way in that trial: **run the built
 page against the printer with the websocket instrumented and compare the call
 list to the old build's.** The one thing that stopped v1.37.5 being adopted was
@@ -280,7 +293,7 @@ The pins as `forks.json` carries them:
 
 | Fork | Tracks | Pinned |
 | --- | --- | --- |
-| Fluidd | release | v1.37.5, `281dadab3f3bc079bde05df6af6c452411ff3749`, branch `cfs` |
+| Fluidd | release | v1.37.7, `b2edab5bc690f5265a5aa1e56ae3f67669053fd4`, branch `cfs` |
 | OrcaSlicer | upstream `main` | `3e1daccd7c567a0a3d2b5721841d30845f21307e`, branch `cfs` |
 
 How far behind each one is, and what the newest upstream release is, is a live question, so this
@@ -312,3 +325,10 @@ unit is an `MF003` with no dryer) and editing a slot that is neither loaded nor
 in the running job's map, which would have been a real write to a real spool
 label. So Load, Unload, Tag, the option toggles and a successful slot edit are
 all still untried from the fork. The refusal path is what was exercised.
+
+The v1.37.7 rebase, 2026-10-19: type-check, the full lint, 557 unit tests and the circular check
+pass; the build installs into the bridge and OrcaSlicer's Device tab (LAN preset) shows the CFS
+card (four units, the printing write-lock banner, Load / Unload in their normal state) and a live
+Cameras card, viewed only, with a job printing. The paused-job override is tested at unit level
+(`cfs-feed.spec.ts`: override only while `paused`, nothing sent after Cancel or after the job
+resumes under the dialog). It has not been sent to the printer from the card: no job was paused.

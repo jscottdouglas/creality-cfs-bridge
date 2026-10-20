@@ -1,6 +1,6 @@
 [project]
 name = "cfsbridge"
-version = "0.4.0"
+version = "0.4.1"
 description = "Local bridge for Creality K2 family printers: CFS slot mapping, Fluidd with a CFS card, and the K2 camera, for the unofficial OrcaSlicer build"
 requires-python = ">=3.12"
 dependencies = ["requests>=2.32", "websockets>=13", "paramiko>=3.4"]

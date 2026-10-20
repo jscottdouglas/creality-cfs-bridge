@@ -59,7 +59,7 @@ The full key set:
   "repo": "<owner>/fluidd",
   "branch": "cfs",
   "commit": "<40 hex characters, the tip of that branch>",
-  "upstream_base": "v1.37.5",
+  "upstream_base": "v1.37.7",
   "upstream_base_commit": "<40 hex characters, the upstream tag the fork sits on>"
 }
 ```
@@ -88,8 +88,9 @@ git -C <clone> rev-parse cfs
 ```
 
 See `docs/FLUIDD_FORK.md` for what the fork changes and which toolchain the pin
-needs. The workflow takes the Node version from the fork's own `.node-version`
-and the pnpm version from the fork's own `packageManager` field, so bumping the
+needs. The workflow takes both the Node and the pnpm version from the fork's own
+`devEngines` field in `package.json` (`pnpm/setup` reads it; upstream dropped
+`.node-version` and the string `packageManager` field in v1.37.6), so bumping the
 pin to a commit with a different toolchain needs no workflow change.
 
 ### Updating `installer/orca_release.json`

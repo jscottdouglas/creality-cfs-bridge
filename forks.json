@@ -4,12 +4,12 @@
       "name": "fluidd",
       "title": "Fluidd",
       "repo": "fluidd-core/fluidd",
-      "pinned_tag": "v1.37.5",
+      "pinned_tag": "v1.37.7",
       "tracks": "release",
-      "pinned_commit": "281dadab3f3bc079bde05df6af6c452411ff3749",
+      "pinned_commit": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4",
       "branch": "cfs",
       "upstream_remote": "origin",
-      "why": "Pinned to the v1.37.5 release (promoted 2026-09-13 after a live trial; the printer's own Fluidd is 1.30.0-f3e4ac3 and branch cfs-1.30.0 keeps that build). The fork adds the CFS card, the CFS and Camera pages, a creality-webrtc camera service and an HTTP fallback for the three access calls this Moonraker lacks on the websocket."
+      "why": "Pinned to the v1.37.7 release (rebased cleanly from v1.37.5 on 2026-10-19; v1.37.5 was promoted 2026-09-13 after a live trial; the printer's own Fluidd is 1.30.0-f3e4ac3 and branch cfs-1.30.0 keeps that build). The fork adds the CFS card, the CFS and Camera pages, a creality-webrtc camera service and an HTTP fallback for the three access calls this Moonraker lacks on the websocket."
     },
     {
       "name": "orcaslicer",

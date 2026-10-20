@@ -1,7 +1,7 @@
 {
   "repo": "jscottdouglas/fluidd",
   "branch": "cfs",
-  "commit": "a8d750dc806c4c1148e563eed230d81445a24876",
-  "upstream_base": "v1.37.5",
-  "upstream_base_commit": "281dadab3f3bc079bde05df6af6c452411ff3749"
+  "commit": "866d3a533b07b15e1ec65c12486a9d8bda6d25e9",
+  "upstream_base": "v1.37.7",
+  "upstream_base_commit": "b2edab5bc690f5265a5aa1e56ae3f67669053fd4"
 }

@@ -61,7 +61,8 @@ Honest about what has and has not been run against a printer:
   colour and remaining length, plus the printer-wide CFS options and a log of every write.
   While a job is printing every write is refused. While a job is paused, the bridge's feed call
   (`POST /cfs/feed`) accepts an explicit `"override": true` for Load and Unload, for clearing a
-  stalled feed without cancelling the job; the card itself does not offer it yet.
+  stalled feed without cancelling the job. While the job is paused the card's Load and Unload
+  buttons turn into that override, and each one asks for confirmation before it sends anything.
 - **Finds the printer again after its address changes.** The bridge remembers the printer's own
   hostname and, when the saved address stops answering, looks for it by mDNS and then on the
   local /24, at most once a minute, and saves the address it finds.

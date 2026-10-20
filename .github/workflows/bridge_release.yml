@@ -112,19 +112,17 @@ jobs:
           ref: ${{ steps.pins.outputs.fluidd_commit }}
           path: fluidd-src
 
-      # The fork's own .node-version is the pin, so this cannot drift from what
-      # the fork's engines field allows.
-      - uses: actions/setup-node@v4
+      # docs/FLUIDD_FORK.md: at this pin the fork is pnpm 12, not npm. Both pnpm
+      # and Node come from the fork's own package.json (devEngines.packageManager
+      # and devEngines.runtime), read by the same action upstream Fluidd uses, so
+      # neither can drift from what the fork pins. Upstream dropped .node-version
+      # and the string packageManager field in v1.37.6. If a future pin drops
+      # devEngines too, this step fails loudly, and the fix is to pass `version`
+      # and `runtime` here instead.
+      - uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
-          node-version-file: fluidd-src/.node-version
-
-      # docs/FLUIDD_FORK.md: at this pin the fork is pnpm, not npm. The pnpm
-      # version comes from the fork's own packageManager field, for the same
-      # reason as the node version above. If a future pin drops that field this
-      # step fails loudly, and the fix is to pin a version here instead.
-      - uses: pnpm/action-setup@v4
-        with:
-          package_json_file: fluidd-src/package.json
+          working-directory: fluidd-src
+          install: false
 
       - name: build fluidd
         shell: pwsh
