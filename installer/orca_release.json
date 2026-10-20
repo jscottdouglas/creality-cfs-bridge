@@ -1,6 +1,6 @@
 {
-  "tag": "v2.5.0-cfs.2",
-  "asset": "UnofficialCrealityOrcaSlicer_Windows_Installer_V2.5.0-dev_x64.exe",
-  "sha256": "53a9e39c58d6402c5665734ff5a550de091bff7a05375d83393fca94fe2eabb1",
-  "url": "https://github.com/jscottdouglas/OrcaSlicer/releases/download/v2.5.0-cfs.2/UnofficialCrealityOrcaSlicer_Windows_Installer_V2.5.0-dev_x64.exe"
+  "tag": "v2.5.0-alpha-cfs.2",
+  "asset": "UnofficialCrealityOrcaSlicer_Windows_Installer_V2.5.0-alpha_x64.exe",
+  "sha256": "6addd860ce11428b41a03984f686e8a40795bd5bdd53d89e81a934f41070ad27",
+  "url": "https://github.com/jscottdouglas/OrcaSlicer/releases/download/v2.5.0-alpha-cfs.2/UnofficialCrealityOrcaSlicer_Windows_Installer_V2.5.0-alpha_x64.exe"
 }

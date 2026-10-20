@@ -17,10 +17,10 @@
       "repo": "SoftFever/OrcaSlicer",
       "pinned_tag": "",
       "tracks": "branch",
-      "pinned_commit": "3e1daccd7c567a0a3d2b5721841d30845f21307e",
-      "branch": "cfs",
+      "pinned_commit": "06665d05582f29acc84cb63cfeb1f719a7f904fd",
+      "branch": "cfs-2.5.0-alpha",
       "upstream_remote": "origin",
-      "why": "Branch cfs adds the Creality CFS (K2) print host type. The fork tracks upstream main, not releases: the pinned base is main at 3e1daccd7c (rebased 2026-09-15), which is the base the shipped build was compiled from."
+      "why": "Branch cfs-2.5.0-alpha adds the Creality CFS (K2) print host type. The fork tracks upstream main, not releases: the pinned base is main at 06665d0558 (2.5.0-alpha plus later fixes, rebased 2026-10-18), which is the base the shipped build was compiled from."
     }
   ]
 }

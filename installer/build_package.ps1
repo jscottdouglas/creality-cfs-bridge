@@ -36,7 +36,7 @@ function Get-Sha256Hex([string] $Path) {
 # a build that carried on to package whatever was left in dist from last time.
 # Every python call below is therefore followed by its own check, naming the
 # step, rather than relying on the preference.
-python -m pip install --upgrade pip pyinstaller==6.* requests websockets
+python -m pip install --upgrade pip pyinstaller==6.* requests websockets paramiko
 if ($LASTEXITCODE -ne 0) {
     throw "pip install failed with exit code $LASTEXITCODE; nothing was packaged"
 }

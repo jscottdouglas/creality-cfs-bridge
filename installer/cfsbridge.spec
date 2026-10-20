@@ -14,6 +14,10 @@
 # `installer/write_orca_preset.py`, which is where `cfsbridge preset` looks
 # for it under sys._MEIPASS; it is data rather than a hidden import because
 # `installer/` is not a package and the CLI loads the file by path.
+# `paramiko` is listed by hand because nozzlecam.py imports it inside the
+# function that opens the SSH session, so the nozzle camera is the only
+# path that needs it and a frozen tree without it would start and serve
+# everything else, then fail only when someone opens /nozzle.
 # `excludes` keeps tkinter out of the frozen tree: the bridge never imports
 # it, and a stray hook pulling it in would grow the installer for nothing.
 #
@@ -30,7 +34,8 @@ a = Analysis([os.path.join(ROOT, "cfsbridge", "__main__.py")], pathex=[ROOT],
              datas=[(os.path.join(ROOT, "cfsbridge", "fluidd"), "fluidd"),
                     (os.path.join(ROOT, "installer", "write_orca_preset.py"),
                      "installer")],
-             hiddenimports=["websockets.legacy", "websockets.legacy.client"],
+             hiddenimports=["websockets.legacy", "websockets.legacy.client",
+                            "paramiko"],
              excludes=["tkinter"])
 pyz = PYZ(a.pure)
 # `contents_directory="."` keeps the one-folder layout flat. PyInstaller 6

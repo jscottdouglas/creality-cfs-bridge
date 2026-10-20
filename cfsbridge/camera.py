@@ -75,6 +75,8 @@ PRIMARY_WEBCAM = "K2 Plus camera"
 # says, and in the fork the record only produced a second, dead camera tile, so
 # the bridge now removes it when it finds it.
 STALE_WEBCAMS = ("K2 Plus camera (bridge page)",)
+# Second record: the nozzle camera, served by the bridge. See wanted_webcams.
+NOZZLE_WEBCAM = "K2 Plus nozzle"
 
 # The fields Moonraker 1.0.5 actually round-trips. It silently drops `enabled`,
 # `uid`, `icon` and `aspect_ratio` from anything posted to it, which is the
@@ -87,8 +89,12 @@ def wanted_webcams(host: str, bridge_url: str,
                    port: int = CAMERA_PORT) -> list[dict]:
     """The one record the bridge would like Moonraker to hold.
 
-    `bridge_url` is kept in the signature for callers and tests; the fork plays
-    the printer's stream itself, so no record points back at the bridge.
+    The fork plays the chamber camera from the printer itself. The nozzle
+    camera has no stream on the printer, so its record points at the bridge,
+    which streams it over SSH while someone watches (nozzlecam.py). It is an
+    `iframe` record on a click-to-view page rather than a bare MJPEG one,
+    because the fork draws every webcam tile at once: a live record would keep
+    the printer's AI flow check paused whenever the Device tab is open.
     """
     return [
         {
@@ -98,6 +104,17 @@ def wanted_webcams(host: str, bridge_url: str,
             "target_fps": 15,
             "stream_url": signalling_url(host, port),
             "snapshot_url": "",
+            "flip_horizontal": False,
+            "flip_vertical": False,
+            "rotation": 0,
+        },
+        {
+            "name": NOZZLE_WEBCAM,
+            "location": "nozzle",
+            "service": "iframe",
+            "target_fps": 5,
+            "stream_url": bridge_url.rstrip("/") + "/nozzle",
+            "snapshot_url": bridge_url.rstrip("/") + "/nozzle/snapshot.jpg",
             "flip_horizontal": False,
             "flip_vertical": False,
             "rotation": 0,

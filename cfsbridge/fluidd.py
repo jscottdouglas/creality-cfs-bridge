@@ -110,6 +110,46 @@ def host_config(host: str, moonraker_port: int = MOONRAKER_PORT,
     }
 
 
+# Served in place of the build's Workbox `sw.js`. The precaching worker served
+# its own copy of index.html, so the page never reached the bridge and the
+# printer-address fix in `instance_script` never ran. This worker clears every
+# cache and unregisters itself; it does not reload pages, because Fluidd
+# registers `sw.js` again on every load and a reload here would loop.
+KILL_SWITCH_SW = """self.addEventListener('install', function () { self.skipWaiting(); });
+self.addEventListener('activate', function (event) {
+  event.waitUntil(caches.keys()
+    .then(function (keys) { return Promise.all(keys.map(function (k) { return caches.delete(k); })); })
+    .then(function () { return self.registration.unregister(); }));
+});
+"""
+
+
+def instance_script(host: str, moonraker_port: int = MOONRAKER_PORT) -> str:
+    """JavaScript that points Fluidd's saved printer list at `host`.
+
+    Fluidd remembers the printers it has connected to in localStorage
+    (`appInstances`) and reconnects to the active one before it ever reads
+    `config.json`, so after the printer changes address it keeps knocking on
+    the old one. This marks the bridge's current address active and drops any
+    other entry on the Moonraker port, which can only be this printer's old
+    addresses. Entries on other ports are left alone.
+    """
+    api = "http://%s:%d" % (host, moonraker_port)
+    sock = "ws://%s:%d/websocket" % (host, moonraker_port)
+    return (
+        "(function(){try{var k='appInstances',api=%s,sock=%s,port=':%d',l=[];"
+        "try{l=JSON.parse(localStorage.getItem(k)||'[]')||[]}catch(e){l=[]}"
+        "var out=[],seen=false;"
+        "for(var i=0;i<l.length;i++){var e=l[i];if(!e||!e.apiUrl)continue;"
+        "if(e.apiUrl===api){e.active=true;seen=true;out.push(e)}"
+        "else if(String(e.apiUrl).indexOf(port)<0){e.active=false;out.push(e)}}"
+        "if(!seen)out.push({apiUrl:api,socketUrl:sock,active:true,name:'K2 Plus'});"
+        "localStorage.setItem(k,JSON.stringify(out));"
+        "var u=new URL(location.href);if(u.searchParams.has('printer')){u.searchParams.delete('printer');"
+        "history.replaceState(history.state,'',u)}}catch(e){}})();"
+        % (json.dumps(api), json.dumps(sock), moonraker_port))
+
+
 class FluiddApp:
     """The static half of `GET /fluidd/...`.
 
@@ -178,10 +218,13 @@ class FluiddApp:
 
         cleaned = rel.lstrip("/")
         if cleaned in ("", "index.html"):
-            return self._file("index.html", REVALIDATE)
+            return self._index()
         if cleaned == "config.json":
             body = self.config_json()
             return 200, body, TYPES[".json"], {"Cache-Control": "no-store"}
+        if cleaned == "sw.js":
+            return (200, KILL_SWITCH_SW.encode("utf-8"), "application/javascript; charset=utf-8",
+                    {"Cache-Control": "no-store"})
 
         found = self.resolve(cleaned)
         if found is not None:
@@ -194,6 +237,21 @@ class FluiddApp:
             return (404, b"not found: /fluidd/" + cleaned.encode("utf-8"),
                     "text/plain; charset=utf-8", {"Cache-Control": "no-store"})
         return self._file("index.html", REVALIDATE)
+
+    def _index(self) -> tuple[int, bytes, str, dict]:
+        """index.html with `instance_script` run before the app.
+
+        A classic inline script runs before the deferred module bundle, so the
+        saved printer list is already corrected when Fluidd reads it.
+        """
+        status, body, ctype, headers = self._file("index.html", REVALIDATE)
+        if status != 200 or not self.host:
+            return status, body, ctype, headers
+        tag = ("<script>%s</script>" % instance_script(self.host, self.moonraker_port)).encode("utf-8")
+        marker = b"<head>"
+        at = body.find(marker)
+        body = body[:at + len(marker)] + tag + body[at + len(marker):] if at >= 0 else tag + body
+        return status, body, ctype, headers
 
     def _file(self, rel: str, cache: str) -> tuple[int, bytes, str, dict]:
         full = self.resolve(rel)

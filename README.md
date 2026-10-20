@@ -26,7 +26,8 @@ small Windows service plus a build of OrcaSlicer that knows how to talk to it.
 ## Supported printers
 
 Creality K2 family with CFS, on stock Creality firmware. LAN mode is not required, and no
-firmware change, root access or hardware modification is involved.
+firmware change or hardware modification is involved. Root access is needed only for the optional
+nozzle camera (see below); everything else works without it.
 
 ## Status
 
@@ -42,6 +43,8 @@ Honest about what has and has not been run against a printer:
   start if the printer does not confirm the mapping. On one printer the display service stopped
   confirming mappings after a reboot until it was power-cycled; the bridge reports that plainly
   rather than starting a job with the wrong slot.
+- **The nozzle camera and printer auto-detect have run live** on the K2 Plus (the nozzle view at
+  1280x720, about 5 fps; a moved printer found again in about 3 seconds).
 - **Not yet exercised on a printer:** the card's **Tag** re-read. The frame is built and checked
   against the protocol, but it has not been sent to real hardware. The UI marks it as such, and
   the bridge refuses all writes while a print is running.
@@ -56,6 +59,21 @@ Honest about what has and has not been run against a printer:
   picture where the slicer can show it.
 - **A CFS card in Fluidd.** Each unit with its temperature, humidity, four slots, material,
   colour and remaining length, plus the printer-wide CFS options and a log of every write.
+  While a job is printing every write is refused. While a job is paused, the bridge's feed call
+  (`POST /cfs/feed`) accepts an explicit `"override": true` for Load and Unload, for clearing a
+  stalled feed without cancelling the job; the card itself does not offer it yet.
+- **Finds the printer again after its address changes.** The bridge remembers the printer's own
+  hostname and, when the saved address stops answering, looks for it by mDNS and then on the
+  local /24, at most once a minute, and saves the address it finds.
+- **The nozzle camera (optional, K2 Plus).** Stock firmware keeps it powered off except for its
+  AI flow check, and nothing streams it. The bridge can show it in Fluidd's camera card over an
+  SSH session to the printer as root, only while someone is watching: it powers the camera on,
+  pauses the printer's AI flow check, and 15 seconds after the last viewer leaves puts both back
+  the way they were. It needs root SSH enabled on the printer's touchscreen. It logs in with the
+  factory root password that Creality publishes unless you set `ssh_user` and `ssh_password` in
+  `config.json`; if you changed the printer's root password, set it there. The host key is
+  accepted on first connection. No SSH session is opened until a nozzle stream or snapshot is
+  requested; the tile in Fluidd waits for a click on **Start nozzle view**.
 
 ## Install
 

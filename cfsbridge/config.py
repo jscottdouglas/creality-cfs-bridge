@@ -16,7 +16,16 @@ from typing import Optional
 
 ENV_VAR = "CFSBRIDGE_CONFIG"
 
-DEFAULTS = {"host": "", "moonraker_port": 7125, "port": 7126, "live": True}
+# "sync_slots": write each mapped slot's material record from the job that is
+# about to use it, because the printer takes its load and flush temperatures
+# from the record and the record reverts when a spool changes slot.
+# "printer_name": the printer's own hostname (K2Plus-XXXX), learned from the
+# first successful read; it is what the bridge looks for when the address moves.
+# "ssh_user"/"ssh_password": root login for the nozzle camera (nozzlecam.py);
+# an empty password means the K2 Plus factory default.
+DEFAULTS = {"host": "", "moonraker_port": 7125, "port": 7126, "live": True,
+            "sync_slots": True, "printer_name": "", "ssh_user": "root",
+            "ssh_password": ""}
 
 
 def config_path(platform: Optional[str] = None, programdata: Optional[str] = None,

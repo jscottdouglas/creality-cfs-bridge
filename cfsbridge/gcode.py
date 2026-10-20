@@ -26,6 +26,11 @@ WANTED = {
     "filament_colour",
     "filament_ids",
     "filament_vendor",
+    # Used to write a slot's material record from the job that is about to use
+    # it; see Facade.sync_slot_records.
+    "nozzle_temperature_range_low",
+    "nozzle_temperature_range_high",
+    "pressure_advance",
     "filament_diameter",
     "filament_density",
     "printer_model",
@@ -55,6 +60,9 @@ class Extruder:
     settings_id: str = ""
     filament_id: str = ""            # Creality material id, e.g. "00001"
     vendor: str = ""
+    temp_low: str = ""               # `nozzle_temperature_range_low`
+    temp_high: str = ""              # `nozzle_temperature_range_high`
+    pressure: str = ""               # `pressure_advance`
 
     @property
     def tool(self) -> str:
@@ -124,6 +132,9 @@ def parse_gcode(path: str, max_tool_scan_bytes: int = 0) -> GcodeInfo:
     ids = _split_list(info.settings.get("filament_settings_id", ""))
     fids = _split_list(info.settings.get("filament_ids", ""))
     vendors = _split_list(info.settings.get("filament_vendor", ""))
+    lows = _split_list(info.settings.get("nozzle_temperature_range_low", ""))
+    highs = _split_list(info.settings.get("nozzle_temperature_range_high", ""))
+    pressures = _split_list(info.settings.get("pressure_advance", ""))
 
     count = max(
         len(types), len(colours), len(ids),
@@ -139,6 +150,9 @@ def parse_gcode(path: str, max_tool_scan_bytes: int = 0) -> GcodeInfo:
                 settings_id=ids[i] if i < len(ids) else "",
                 filament_id=fids[i] if i < len(fids) else "",
                 vendor=vendors[i] if i < len(vendors) else "",
+                temp_low=lows[i] if i < len(lows) else "",
+                temp_high=highs[i] if i < len(highs) else "",
+                pressure=pressures[i] if i < len(pressures) else "",
             )
         )
 

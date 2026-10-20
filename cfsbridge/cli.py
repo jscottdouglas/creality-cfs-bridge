@@ -111,6 +111,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--bind", default="127.0.0.1")
     p_serve.add_argument("--method", choices=METHODS, default="colormatch")
     serve_live = p_serve.add_mutually_exclusive_group()
+    sync_group = p_serve.add_mutually_exclusive_group()
+    sync_group.add_argument(
+        "--sync-slots", dest="sync_slots", action="store_true", default=None,
+        help="before starting a job, write each mapped slot's material record "
+             "from the filament the job uses (the default)")
+    sync_group.add_argument(
+        "--no-sync-slots", dest="sync_slots", action="store_false",
+        help="leave the slots' material records alone")
     serve_live.add_argument("--live", dest="live", action="store_true",
                             default=None,
                             help="actually start jobs; without this the facade "
@@ -242,7 +250,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         print(plan.describe())
         print("")
         print("uploaded : HTTP %s %s" % (plan.upload.status, plan.upload.url))
-        print("started  : yes")
+        print("started  : yes (the printer reports the job running)")
         return 0
 
     with CrealityClient(host, dry_run=True) as client:
@@ -281,6 +289,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         allow_type_mismatch=args.allow_type_mismatch, spool_dir=args.spool_dir,
         log_path=args.log_path, poll_interval=args.poll_interval,
         fluidd_dist=args.fluidd_dist, sync_webcams=args.sync_webcams,
+        sync_slots=(args.sync_slots if args.sync_slots is not None
+                    else cfg["sync_slots"]),
+        printer_name=cfg["printer_name"],
     )
 
 

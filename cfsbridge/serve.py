@@ -46,6 +46,7 @@ from . import upstream
 from .bridge import (_human, read_moonraker_box, read_moonraker_print_stats,
                      send_live)
 from .cfscard import cfs_card_page
+from . import discover, nozzlecam
 from .config import config_path, load_config, save_config
 from .gcode import GcodeInfo, parse_gcode
 from .logs import get_logger
@@ -64,6 +65,9 @@ OCTOPRINT_VERSION = {
 UNDO_SECONDS = 60.0
 POLL_SECONDS = 5.0
 POLL_BACKOFF = 20.0
+# How often, at most, a printer that stopped answering is looked for elsewhere
+# on the network. See `Facade._maybe_rediscover` and discover.py.
+REDISCOVER_SECONDS = 60.0
 
 # What the setup page is allowed to save as a printer address: an IPv4 address
 # or a hostname, and nothing that could be a URL, a path or a shell word. The
@@ -285,9 +289,13 @@ class Facade:
                  log_path: Optional[str] = None,
                  fluidd_dist: Optional[str] = None,
                  bind: str = "127.0.0.1",
-                 port: int = 7126) -> None:
+                 port: int = 7126,
+                 sync_slots: bool = True) -> None:
         self.host = host
         self.method = method
+        # Write each mapped slot's material record from the job about to use it,
+        # just before starting. See `sync_slot_records`.
+        self.sync_slots = sync_slots
         self.live = live
         self.allow_type_mismatch = allow_type_mismatch
         self.moonraker_port = moonraker_port
@@ -307,6 +315,17 @@ class Facade:
         # after `apply_host` is handed a real looking address. It is not the
         # per-write dry run, which is `live` and `_dry()`.
         self.dry_run = False
+        # Address auto-detection. `printer_name` is the printer's own hostname,
+        # learned from a successful read; `persist` is set by `serve()` only, so
+        # no test ever writes a config file or searches a network.
+        self.printer_name = ""
+        self.persist = False
+        self.discover_fn = discover.find_printer
+        self._last_discovery = 0.0
+        # The nozzle camera, streamed over SSH only while someone watches.
+        cfg = load_config()
+        self.nozzle = nozzlecam.NozzleCam(lambda: self.host, user=cfg["ssh_user"],
+                                          password=cfg["ssh_password"])
 
         # The forked Fluidd. `GET /fluidd/` is its dist; see fluidd.py and
         # docs/FLUIDD_FORK.md. The stock-Fluidd fallback pages (`/camera`,
@@ -511,6 +530,15 @@ class Facade:
                 self.materials = list(extras["materials"])
             self.last_ok = time.time()
             self.last_error = None
+            learned = str(snapshot.get("hostname") or "")
+            if learned == self.printer_name:
+                learned = ""
+            elif learned:
+                self.printer_name = learned
+        if learned and self.persist:
+            self._save({"printer_name": learned})
+            log.info("printer calls itself %s; it will be looked for by that name "
+                     "if its address changes", learned)
         if recovered:
             log.info("printer %s answered: %d slots, state %s",
                      self.host, len(table.slots), describe_state(snapshot)[0])
@@ -538,7 +566,41 @@ class Facade:
                 # result was dropped. Read the new printer now rather than
                 # sitting out a backoff the old printer earned.
                 continue
+            if not ok and self._maybe_rediscover():
+                continue
             self._stop.wait(self.poll_interval if ok else POLL_BACKOFF)
+
+    def _save(self, values: dict) -> None:
+        try:
+            save_config(values)
+        except OSError as exc:
+            log.warning("could not save %s to the config file: %s", sorted(values), exc)
+
+    def _maybe_rediscover(self) -> bool:
+        """The printer stopped answering: has it moved? True when re-pointed.
+
+        At most once a minute, never in a dry run or without a known name. A
+        found address is applied and saved so the next start uses it too.
+        """
+        with self.lock:
+            name, host = self.printer_name, self.host
+            now = time.time()
+            if (self.dry_run or not self.persist or not name
+                    or now - self._last_discovery < REDISCOVER_SECONDS):
+                return False
+            self._last_discovery = now
+        try:
+            found = self.discover_fn(name, host, self.moonraker_port)
+        except Exception as exc:
+            log.warning("looking for %s on the network failed: %s", name, exc)
+            return False
+        if not found or found == host:
+            log.info("%s is not answering at %s and was not found elsewhere", name, host)
+            return False
+        log.info("%s moved from %s to %s; following it", name, host, found)
+        self.apply_host(found)
+        self._save({"host": found})
+        return True
 
     def start_poller(self) -> None:
         """Start polling, unless there is nothing to poll.
@@ -934,13 +996,14 @@ class Facade:
                 "%s/%s" % (unit_no, index))
         return found, ""
 
-    def _gate(self, kind: str, slot=None) -> Optional[str]:
+    def _gate(self, kind: str, slot=None, override: bool = False) -> Optional[str]:
         """The one place a CFS write is allowed or refused. Server side."""
         if not self.live:
             return ("cfsbridge is running without --live, so nothing was sent. "
                     "This is what it would have written.")
         return cfs.check_write(kind, self.print_state(), slot=slot,
-                               active_map=self.active_map_labels())
+                               active_map=self.active_map_labels(),
+                               override=override)
 
     def _record(self, record) -> dict:
         with self.lock:
@@ -1054,13 +1117,15 @@ class Facade:
         return self._finish("config", description, result, before, after)
 
     def feed_slot(self, unit, slot, feed: bool,
-                  dry_run: Optional[bool] = None) -> dict:
-        """Load or unload one slot. `feedInOrOut`, section 6.4."""
+                  dry_run: Optional[bool] = None, override: bool = False) -> dict:
+        """Load or unload one slot. `feedInOrOut`, section 6.4.
+
+        `override` allows it while the job is paused (see `cfs.check_write`)."""
         target, error = self._find_slot(unit, slot)
         if target is None:
             return self._refused("feed", error, bool(dry_run))
         dry = self._dry(dry_run)
-        refusal = self._gate("feed", slot=target)
+        refusal = self._gate("feed", slot=target, override=override)
         if refusal and not dry:
             return self._refused("feed", refusal, False)
         if feed and not target.present:
@@ -1070,6 +1135,8 @@ class Facade:
 
         params = feed_frame(target.unit, target.slot, 1 if feed else 0)
         description = "%s CFS slot %s" % ("load" if feed else "unload", target.label)
+        if override and self.print_state() == "paused":
+            description += " (override: job paused)"
         # The printer echoes nothing for this one, so there is no ack to wait
         # for and no read-back that proves it instantly; the card watches the
         # slot's `loaded` flag on the next poll instead.
@@ -1270,10 +1337,115 @@ class Facade:
 
         return self._start(local_path, name, assignments, auto=True)
 
+    # -- slot records ------------------------------------------------------
+
+    def _record_for(self, extruder) -> Optional[dict]:
+        """The slot record a job's filament describes, or None if it says too
+        little to be worth writing.
+
+        An Orca preset name is not a printer database name, so the vendor and
+        name are resolved against the printer's own database, trying the
+        preset's own name first and falling back to the Generic entry for the
+        material type. The temperatures come from the job, because the
+        database's window for a Generic entry is deliberately wide.
+        """
+        material = (getattr(extruder, "filament_type", "") or "").strip()
+        if not material:
+            return None
+        vendor = (getattr(extruder, "vendor", "") or "").strip()
+        # "Anycubic PETG @K2 Plus" -> "Anycubic PETG"
+        preset = (getattr(extruder, "settings_id", "") or "").split("@")[0].strip()
+        with self.lock:
+            items = list(self.materials)
+        entry = None
+        for try_vendor, try_name in ((vendor, preset), ("Generic", preset),
+                                     (vendor, "%s %s" % (vendor, material)),
+                                     ("Generic", "Generic %s" % material)):
+            if not try_name:
+                continue
+            entry = materials_db.find(items, try_vendor, material, try_name)
+            if entry is not None:
+                vendor, preset = try_vendor, try_name
+                break
+        if entry is None:
+            vendor, preset = "Generic", "Generic %s" % material
+        fields = {"vendor": vendor, "type": material, "name": preset}
+        low = _num(getattr(extruder, "temp_low", "") or 0)
+        high = _num(getattr(extruder, "temp_high", "") or 0)
+        if low:
+            fields["min_temp"] = low
+        if high:
+            fields["max_temp"] = high
+        pressure = getattr(extruder, "pressure", "") or ""
+        if pressure:
+            fields["pressure"] = _num(pressure)
+        colour = getattr(extruder, "colour", "") or ""
+        if colour:
+            fields["colour"] = colour
+        return fields
+
+    def sync_slot_records(self, assignments: list[Assignment],
+                          dry_run: Optional[bool] = None) -> list[dict]:
+        """Make each mapped slot's record match the filament about to use it.
+
+        The printer takes its load, unload and flush temperatures from the slot
+        record, not from the G-code, and the record reverts to a wide Generic
+        entry whenever a spool is moved between slots. So a job that maps a
+        filament to a slot is the one moment the truth is known, and this is
+        where it gets written.
+
+        Only slots whose record actually differs are written. Every write goes
+        through `edit_slot`, so the same gate, read-back verification, write log
+        and undo apply. A refusal is logged and does not stop the job: a stale
+        record is worse than no sync, but neither is worth cancelling a print
+        the user asked for.
+        """
+        out: list[dict] = []
+        for assignment in assignments:
+            extruder = getattr(assignment, "extruder", None)
+            slot = assignment.slot
+            if extruder is None or slot is None:
+                continue
+            wanted = self._record_for(extruder)
+            if not wanted:
+                continue
+            before = _slot_values(slot)
+            same = (
+                str(before.get("type", "")) == wanted["type"]
+                and str(before.get("vendor", "")) == wanted["vendor"]
+                and str(before.get("name", "")) == wanted["name"]
+                and (not wanted.get("min_temp")
+                     or _num(before.get("min_temp")) == wanted["min_temp"])
+                and (not wanted.get("max_temp")
+                     or _num(before.get("max_temp")) == wanted["max_temp"])
+            )
+            if same:
+                log.info("slot %s already reads as %s %s, not written",
+                         slot.label, wanted["vendor"], wanted["name"])
+                continue
+            result = self.edit_slot(None, slot.label, wanted, dry_run=dry_run)
+            out.append({"slot": slot.label, "tool": assignment.tool,
+                        "wanted": wanted, "ok": bool(result.get("ok")),
+                        "sent": bool(result.get("sent")),
+                        "refused": bool(result.get("refused")),
+                        "message": result.get("message") or ""})
+            if not result.get("ok"):
+                log.warning("slot %s record not updated: %s", slot.label,
+                            result.get("message") or "no reason given")
+        return out
+
     def _start(self, local_path: str, name: str, assignments: list[Assignment],
                auto: bool) -> tuple[int, str]:
         explicit = ["T%d=%s" % (a.tool, a.slot.label) for a in assignments]
         log.info("starting %s with %s", name, _summary(assignments))
+        # Before the job, while the printer is still idle and the mapping is
+        # known, make the slot records match what is about to be printed.
+        synced: list[dict] = []
+        if self.sync_slots:
+            try:
+                synced = self.sync_slot_records(assignments)
+            except Exception as exc:      # never let this stop a print
+                log.warning("slot record sync skipped: %s", exc)
         try:
             plan = self.send_live_fn(
                 self.host, local_path, explicit=explicit, auto=False,
@@ -1299,6 +1471,7 @@ class Facade:
                     "type": a.slot.material_type, "colour": a.slot.colour,
                     "reason": a.reason,
                 } for a in assignments],
+                "slot_records": synced,
             }
         return 201, "started %s with %s" % (name, _summary(assignments))
 
@@ -1775,6 +1948,19 @@ class Handler(BaseHTTPRequestHandler):
             # producing one here would mean holding a WebRTC session open with
             # aiortc, which is not a dependency of the bridge. docs/CAMERA.md.
             self._text(501, camera.mjpeg_note())
+        elif path == "/nozzle":
+            self._send(200, nozzlecam.PAGE.encode("utf-8"), "text/html; charset=utf-8")
+        elif path == "/nozzle/stream":
+            self._nozzle_stream()
+        elif path == "/nozzle/snapshot.jpg":
+            frame = None if self.facade.dry_run else self.facade.nozzle.snapshot()
+            if frame:
+                self._send(200, frame, "image/jpeg", {"Cache-Control": "no-store"})
+            else:
+                self._text(503, "no nozzle camera frame: %s"
+                           % (self.facade.nozzle.status().get("error") or "timed out"))
+        elif path == "/nozzle/status":
+            self._json(200, self.facade.nozzle.status())
         elif path == "/health":
             self._json(200, {"ok": True, "version": __version__})
         elif path == "/favicon.ico":
@@ -1796,6 +1982,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         else:
             self._text(404, "not found: %s" % path)
+
+    def _nozzle_stream(self) -> None:
+        """`GET /nozzle/stream`: multipart MJPEG for as long as the viewer reads."""
+        if self.facade.dry_run or not self.facade.host:
+            self._text(503, "no printer to stream from")
+            return
+        boundary = "cfsbridgeframe"
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + boundary)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        frames = self.facade.nozzle.frames()
+        try:
+            for frame in frames:
+                self.wfile.write(b"--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n"
+                                 % (boundary.encode(), len(frame)))
+                self.wfile.write(frame)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            frames.close()
+        self.close_connection = True
 
     def _setup_state(self) -> dict:
         """`GET /api/setup`: what the setup page fills its box in from.
@@ -1967,7 +2178,8 @@ class Handler(BaseHTTPRequestHandler):
             return facade.set_box_config(body, dry_run=dry_run)
         if path == "/cfs/feed":
             return facade.feed_slot(unit, slot, _truthy(body.get("feed")),
-                                    dry_run=dry_run)
+                                    dry_run=dry_run,
+                                    override=_truthy(body.get("override")))
         if path == "/cfs/refresh":
             return facade.refresh_slot(unit, slot, dry_run=dry_run)
         if path == "/cfs/dry":
@@ -2023,7 +2235,8 @@ def make_server(host: str = "", bind: str = "127.0.0.1", port: int = 7126,
                 log_path: Optional[str] = None,
                 poll_interval: float = POLL_SECONDS,
                 fluidd_dist: Optional[str] = None,
-                dry_run: bool = False) -> ThreadingHTTPServer:
+                dry_run: bool = False,
+                sync_slots: bool = True) -> ThreadingHTTPServer:
     """A bound but unstarted server, with its facade on `server.facade`.
 
     `serve()` is this plus the poller, the log lines and `serve_forever`. The
@@ -2034,7 +2247,8 @@ def make_server(host: str = "", bind: str = "127.0.0.1", port: int = 7126,
     live = live and not dry_run
     facade = Facade(host, method, live, allow_type_mismatch, moonraker_port,
                     spool_dir, poll_interval=poll_interval, log_path=log_path,
-                    fluidd_dist=fluidd_dist, bind=bind, port=port)
+                    fluidd_dist=fluidd_dist, bind=bind, port=port,
+                    sync_slots=sync_slots)
     facade.dry_run = dry_run
     server = build_server(facade, bind, port)
     server.facade = facade  # type: ignore[attr-defined]
@@ -2057,12 +2271,14 @@ def serve(host: str, bind: str = "127.0.0.1", port: int = 7126,
           log_path: Optional[str] = None,
           poll_interval: float = POLL_SECONDS,
           fluidd_dist: Optional[str] = None,
-          sync_webcams: bool = True) -> int:
+          sync_webcams: bool = True,
+          sync_slots: bool = True,
+          printer_name: str = "") -> int:
     try:
         server = make_server(
             host, bind, port, method, live, allow_type_mismatch, moonraker_port,
             spool_dir, log_path=log_path, poll_interval=poll_interval,
-            fluidd_dist=fluidd_dist)
+            fluidd_dist=fluidd_dist, sync_slots=sync_slots)
     except OSError as exc:
         # The autostart task fires every minute, so this happens 1439 times a
         # day on a healthy machine. At debug level it stays out of the way of
@@ -2070,6 +2286,8 @@ def serve(host: str, bind: str = "127.0.0.1", port: int = 7126,
         log.debug("not starting: %s:%d is already in use (%s)", bind, port, exc)
         return 0
     facade = server.facade  # type: ignore[attr-defined]
+    facade.printer_name = printer_name
+    facade.persist = True
     # No address means no poller: it would only retry Moonraker at "".
     facade.start_poller()
     if host:

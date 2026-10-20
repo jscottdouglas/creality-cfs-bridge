@@ -3,7 +3,7 @@
 See docs/PROTOCOL.md for the wire protocol this package implements.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 DEFAULT_HOST = ""
 CREALITY_PORT = 9999

@@ -74,17 +74,23 @@ def is_busy(state: str) -> bool:
     return state in BUSY_STATES or state == "unknown"
 
 
-def check_write(kind: str, state: str, *, slot=None, active_map=None) -> Optional[str]:
+def check_write(kind: str, state: str, *, slot=None, active_map=None,
+                override: bool = False) -> Optional[str]:
     """Returns the refusal message, or None when the write may go ahead.
 
     `slot` is the `Slot` an `edit`, `clear`, `feed` or `refresh` targets.
     `active_map` is the set of slot labels the printer's live `colorMatch`
     currently redirects to, which is not the same thing as the loaded slot: a
     two-colour job holds two slots and only one of them is in the toolhead.
+    `override` lets a load or unload through while the job is paused, so a
+    stuck feed can be cleared (unload, fix, reload) and the job resumed
+    instead of cancelled. It never applies while the job is printing.
     """
     if kind not in WRITE_KINDS:
         return "%r is not a CFS write this bridge knows how to make." % kind
     if not is_busy(state):
+        return None
+    if override and kind == "feed" and state == "paused":
         return None
 
     running = "paused" if state == "paused" else "printing"

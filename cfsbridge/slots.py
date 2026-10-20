@@ -316,6 +316,7 @@ def build_slot_table(boxs_info: dict, moonraker_box: Optional[dict] = None) -> S
                 continue
             remains = unit_data.get("remain_len") or []
             types = unit_data.get("material_type") or []
+            venders = unit_data.get("vender") or []
             for mid in range(SLOTS_PER_UNIT):
                 slot = table.get(unit, mid)
                 if slot is None:
@@ -333,6 +334,16 @@ def build_slot_table(boxs_info: dict, moonraker_box: Optional[dict] = None) -> S
                     # one, "-1" for an empty slot.
                     if raw == "unknown" and slot.material_type:
                         slot.edited = True
+                    # An untagged spool the printer is not tracking reads 0 m:
+                    # that is "unknown", not "empty". (A tracked one, like the
+                    # 2B capture, reports a real figure and is kept.)
+                    # Newer firmware keeps a hand-set material code there
+                    # ("000003") and says "unknown" in vender instead, which
+                    # is how 3C read on 2026-10-05.
+                    untagged = raw == "unknown" or (
+                        mid < len(venders) and str(venders[mid]) == "unknown")
+                    if untagged and slot.remain_len == 0.0:
+                        slot.remain_len = None
 
     table.slots.sort(key=lambda s: (s.unit, s.slot))
     return table
